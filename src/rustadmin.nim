@@ -14,7 +14,8 @@ type
   Callback = proc(node: JsonNode): Future[void]
 
 let
-  PLAYER_JOINED_MESSAGE = peg"^{\letter+}\[\d+\/{\d+}\]' has entered the game'"
+  PLAYER_JOINED_MESSAGE = peg"^{(\d+\.?)+}\:\d+\/{\d+}\/{\letter+}' joined ['{\letter+}\/$2']'$"
+  #PLAYER_ENTERED_MESSAGE = peg"^{\letter+}\[\d+\/{\d+}\]' has entered the game'"
   GET_PLAYER_BANS = "http://api.steampowered.com/ISteamUser/GetPlayerBans/v1/?key=$#&steamids=$#"
 
 var
@@ -95,7 +96,7 @@ proc onMessage(packet: string) {.async.} =
     else:
       let message = data["Message"].getStr
       if message =~ PLAYER_JOINED_MESSAGE:
-        info "Checking VAC Bans for new player", name=matches[0], steamId=matches[1]
+        info "Checking VAC Bans for new player", name=matches[2], steamId=matches[1]
         await checkVACBan(matches[1])
   except JsonParsingError, KeyError:
     let e = getCurrentException()

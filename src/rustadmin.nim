@@ -1,9 +1,12 @@
 import json, ws, asyncdispatch, sim, strformat, tables, json, strutils, httpclient, pegs, chronicles
 
+import private/tg
+
 type
   AntiCheat = object
     numberOfVacBans: int
     daysSinceLastBan: int
+
   Config = object
     autoReconnect: bool
     debug: bool
@@ -11,6 +14,8 @@ type
     rconAddress: string
     rconPassword: string
     anticheat: seq[AntiCheat]
+    tg: Telegram
+
   Callback = proc(node: JsonNode): Future[void]
 
 let
@@ -68,6 +73,18 @@ proc checkVACBan*(steamIds: seq[string]) {.async.} =
         temp = @[]
   await checkVACBan(steamIds.join(","))
 
+
+proc onServerInfo(info: JsonNode) {.async.} =
+  let
+    players = info["Players"].getInt
+    maxPlayers = info["MaxPlayers"].getInt
+  await updatePlayerOnline(players, maxPlayers)
+
+proc updatePlayerCount() {.async.} =
+  while true:
+    await sleepAsync(10000)
+    await sendCmd("serverinfo", onServerInfo)
+
 proc onPlayerList(node: JsonNode) {.async.} =
   if node.len == 0:
     return
@@ -81,24 +98,27 @@ proc onPlayerList(node: JsonNode) {.async.} =
 proc onConnect() {.async.} =
   info "Connected"
   await sendCmd("playerlist", onPlayerList)
+  asyncCheck updatePlayerCount()
 
-proc onMessage(packet: string) {.async.} =
+proc onChat(message: string) {.async.} =
+  if config.tg.syncChat:
+    asyncCheck addMessage(message)
+
+proc onMessage(data: JsonNode) {.async.} =
   try:
-    let
-      data = parseJson(packet)
-      id = data["Identifier"].getInt
+    let id = data["Identifier"].getInt
     if callbacks.hasKey(id):
       let
         cb = callbacks[id]
         message = parseJson(data["Message"].getStr)
-      callbacks.del(id)
       await cb(message)
+      callbacks.del(id)
     else:
       let message = data["Message"].getStr
       if message =~ PLAYER_JOINED_MESSAGE:
         info "Checking VAC Bans for new player", name=matches[2], steamId=matches[1]
         await checkVACBan(matches[1])
-  except JsonParsingError, KeyError:
+  except KeyError:
     let e = getCurrentException()
     error "Exception caught", name=e.name, message=e.msg
 
@@ -106,7 +126,6 @@ proc connect() {.async.} =
   while true:
     try:
       s = await newWebSocket(fmt"ws://{config.rconAddress}/{config.rconPassword}")
-      #s = await newWebSocket("ws://127.0.0.1:8080")
       await onConnect()
       break
     except OSError, IOError:
@@ -114,14 +133,25 @@ proc connect() {.async.} =
       await sleepAsync(2000)
 
 proc main() {.async.} =
+  asyncCheck initTelegram(config.tg)
+
   info "Starting"
   await connect()
   while true:
     if s.readyState == Open:
       debug "Waiting for messages"
       try:
-        let packet = await s.receiveStrPacket()
-        await onMessage(packet)
+        let
+          packet = await s.receiveStrPacket()
+          message = parseJson(packet)
+        #echo message["Type"].getStr, packet
+        if message["Type"].getStr == "Chat":
+          await onChat(message["Message"].getStr)
+        else:
+          await onMessage(message)
+      except JsonParsingError:
+        let e = getCurrentException()
+        error "Exception caught", name=e.name, message=e.msg
       except WebSocketError:
         error "Connection closed"
         s.readyState = Closed

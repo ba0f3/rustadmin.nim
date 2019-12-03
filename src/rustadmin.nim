@@ -2,6 +2,11 @@ import json, ws, asyncdispatch, sim, strformat, tables, json, strutils, httpclie
 
 import private/tg
 
+const
+  SERVER_INFO = 1000
+  PLAYER_LIST = 1001
+
+
 type
   AntiCheat = object
     numberOfVacBans: int
@@ -18,6 +23,8 @@ type
 
   Callback = proc(node: JsonNode): Future[void]
 
+
+
 let
   PLAYER_JOINED_MESSAGE = peg"^{(\d+\.?)+}\:\d+\/{\d+}\/{@}' joined ['{\letter+}\/$2\]$"
   #PLAYER_ENTERED_MESSAGE = peg"^{\letter+}\[\d+\/{\d+}\]' has entered the game'"
@@ -27,12 +34,8 @@ var
   config: Config
   s: WebSocket
   callbacks = initTable[int, Callback]()
-  id: int = 0
 
-proc sendCmd(cmd: string, callback: Callback = nil) {.async.} =
-  inc(id)
-  if callback != nil:
-    callbacks[id] = callback
+proc sendCmd(cmd: string, id = -1) {.async.} =
   debug "Execute RCON command", cmd
   await s.send("{\"Identifier\":" & $id & ",\"Message\":\"" & cmd & "\",\"Name\":\"rustadm.nim\"}")
 
@@ -82,8 +85,8 @@ proc onServerInfo(info: JsonNode) {.async.} =
 
 proc updatePlayerCount() {.async.} =
   while true:
-    await sleepAsync(10000)
-    await sendCmd("serverinfo", onServerInfo)
+    await sleepAsync(10 * 1_000)
+    await sendCmd("serverinfo", SERVER_INFO)
 
 proc onPlayerList(node: JsonNode) {.async.} =
   if node.len == 0:
@@ -97,7 +100,7 @@ proc onPlayerList(node: JsonNode) {.async.} =
 
 proc onConnect() {.async.} =
   info "Connected"
-  await sendCmd("playerlist", onPlayerList)
+  await sendCmd("playerlist", PLAYER_LIST)
   asyncCheck updatePlayerCount()
 
 proc onChat(message: string) {.async.} =
@@ -108,15 +111,12 @@ proc onMessage(data: JsonNode) {.async.} =
   try:
     let id = data["Identifier"].getInt
     if callbacks.hasKey(id):
-      let
-        cb = callbacks[id]
-        message = parseJson(data["Message"].getStr)
-      await cb(message)
-      callbacks.del(id)
+      let message = parseJson(data["Message"].getStr)
+      await callbacks[id](message)
     else:
       let message = data["Message"].getStr
       if message =~ PLAYER_JOINED_MESSAGE:
-        info "Checking VAC Bans for new player", name=matches[2], steamId=matches[1]
+        info "Checking VAC Bans for new player", name=matches[2], steamId=matches[1], ip=matches[0]
         await checkVACBan(matches[1])
   except KeyError:
     let e = getCurrentException()
@@ -134,6 +134,10 @@ proc connect() {.async.} =
 
 proc main() {.async.} =
   asyncCheck initTelegram(config.tg)
+
+  callbacks[SERVER_INFO] = onServerInfo
+  callbacks[PLAYER_LIST] = onPlayerList
+
 
   info "Starting"
   await connect()

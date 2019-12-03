@@ -1,4 +1,4 @@
-import telebot, asyncdispatch, json, strformat, strutils, chronicles
+import telebot, asyncdispatch, json, strformat, strutils, chronicles, options
 
 const MAX_CHAT_MESSAGE_SIZE = 4000
 
@@ -13,7 +13,7 @@ var
   config: Telegram
   buffer: seq[string]
   bot: TeleBot
-
+  lastOnline = 0
 
 proc syncChatMessages() {.async.} =
   var content: string
@@ -41,11 +41,19 @@ proc loop() {.async.} =
     await sleepAsync(1000)
 
 
+proc updateHandler(b: Telebot, u: Update) {.async.} =
+  if u.message.isSome:
+    let message = u.message.get
+    if message.newChatTitle.isSome:
+      discard await bot.deleteMessage($message.chat.id, message.messageId)
+
+
 proc initTelegram*(cfg: Telegram) {.async.} =
   config = cfg
   bot = newTeleBot(config.botApi)
-
+  bot.onUpdate(updateHandler)
   asyncCheck loop()
+  asynccheck pollAsync(bot, clean = true)
 
 proc addMessage*(message: string) {.async.} =
   try:
@@ -60,6 +68,9 @@ proc addMessage*(message: string) {.async.} =
     error "Exception caught", name=e.name, message=e.msg
 
 proc updatePlayerOnline*(online, max: int) {.async.} =
+  if online == lastOnline:
+    return
+  lastOnline = online
   let title = fmt"{config.chatTitle} [{online}/{max}]"
   try:
     discard await bot.setChatTitle($config.chatId, title)

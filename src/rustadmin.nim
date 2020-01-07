@@ -5,6 +5,7 @@ import private/tg
 const
   SERVER_INFO = 1000
   PLAYER_LIST = 1001
+  RCON_RESULT = 1002
 
 
 type
@@ -21,7 +22,7 @@ type
     anticheat: seq[AntiCheat]
     tg: Telegram
 
-  Callback = proc(node: JsonNode): Future[void]
+  Callback = proc(data: string): Future[void]
 
 
 
@@ -43,8 +44,11 @@ proc checkVACBan*(steamId: string) {.async.} =
   let
     endpoint = GET_PLAYER_BANS % [config.steamApiKey, steamId]
     client = newAsyncHttpClient()
+  defer: client.close()
+  let
     data = await client.getContent(endpoint)
     node = parseJson(data)
+
   if node["players"].len == 0:
     return
   for player in node["players"].items:
@@ -76,19 +80,23 @@ proc checkVACBan*(steamIds: seq[string]) {.async.} =
         temp = @[]
   await checkVACBan(steamIds.join(","))
 
+proc onResponse(data: string) {.async.} =
+  await addText(data)
 
-proc onServerInfo(info: JsonNode) {.async.} =
+proc onServerInfo(data: string) {.async.} =
   let
+    info = parseJson(data)
     players = info["Players"].getInt
     maxPlayers = info["MaxPlayers"].getInt
   await updatePlayerOnline(players, maxPlayers)
 
 proc updatePlayerCount() {.async.} =
   while true:
-    await sleepAsync(10 * 1_000)
+    await sleepAsync(5 * 1_000)
     await sendCmd("serverinfo", SERVER_INFO)
 
-proc onPlayerList(node: JsonNode) {.async.} =
+proc onPlayerList(data: string) {.async.} =
+  let node = parseJson(data)
   if node.len == 0:
     return
   info "Checking VAC Bans for existing players", count=node.len
@@ -97,7 +105,6 @@ proc onPlayerList(node: JsonNode) {.async.} =
     ids.add(player["SteamID"].getStr)
   await checkVACBan(ids)
 
-
 proc onConnect() {.async.} =
   info "Connected"
   await sendCmd("playerlist", PLAYER_LIST)
@@ -105,14 +112,13 @@ proc onConnect() {.async.} =
 
 proc onChat(message: string) {.async.} =
   if config.tg.syncChat:
-    asyncCheck addMessage(message)
+    asyncCheck addChatMessage(message)
 
 proc onMessage(data: JsonNode) {.async.} =
   try:
     let id = data["Identifier"].getInt
     if callbacks.hasKey(id):
-      let message = parseJson(data["Message"].getStr)
-      await callbacks[id](message)
+      await callbacks[id](data["Message"].getStr)
     else:
       let message = data["Message"].getStr
       if message =~ PLAYER_JOINED_MESSAGE:
@@ -133,11 +139,11 @@ proc connect() {.async.} =
       await sleepAsync(2000)
 
 proc main() {.async.} =
-  asyncCheck initTelegram(config.tg)
+  asyncCheck initTelegram(config.tg, sendCmd)
 
   callbacks[SERVER_INFO] = onServerInfo
   callbacks[PLAYER_LIST] = onPlayerList
-
+  callbacks[RCON_RESULT] = onResponse
 
   info "Starting"
   await connect()

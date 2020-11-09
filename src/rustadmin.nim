@@ -24,8 +24,6 @@ type
 
   Callback = proc(data: string): Future[void]
 
-
-
 let
   PLAYER_JOINED_MESSAGE = peg"^{(\d+\.?)+}\:\d+\/{\d+}\/{@}' joined ['{\letter+}\/$2\]$"
   #PLAYER_ENTERED_MESSAGE = peg"^{\letter+}\[\d+\/{\d+}\]' has entered the game'"
@@ -172,10 +170,5 @@ proc main() {.async.} =
 
 when isMainModule:
   config = to[Config]("config.ini")
-
-  if config.debug:
-    setLogLevel(DEBUG)
-  else:
-    setLogLevel(INFO)
 
   waitFor main()

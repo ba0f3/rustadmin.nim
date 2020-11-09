@@ -30,10 +30,7 @@ proc syncChatMessages() {.async.} =
 
   if content.len > 0:
     try:
-      var message = newMessage(config.chatId, content)
-      message.disableNotification = true
-      message.parseMode = "markdown"
-      bot.send(message)
+      discard await bot.sendMessage(config.chatId, content, disableNotification=true, disableWebpagePreview=true)
     except:
       let e = getCurrentException()
       error "Cannot send message to Telegram", name=e.name, message=e.msg
@@ -44,7 +41,7 @@ proc loop() {.async.} =
     await sleepAsync(1000)
 
 
-proc updateHandler(b: Telebot, u: Update) {.async.} =
+proc updateHandler(b: Telebot, u: Update): Future[bool] {.async, gcsafe.} =
   if u.message.isSome:
     let message = u.message.get
     if message.newChatTitle.isSome:
@@ -58,7 +55,7 @@ proc updateHandler(b: Telebot, u: Update) {.async.} =
         if text[0] == '~':
           await sendRconCmd("say " & text[1..<text.len], 1002)
 
-proc commandHandler(bot: Telebot, command: CatchallCommand) {.async.} =
+proc commandHandler(bot: Telebot, command: Command): Future[bool] {.async, gcsafe.} =
   let message = command.message
   if message.text.isSome and message.fromUser.isSome:
     let
@@ -69,6 +66,7 @@ proc commandHandler(bot: Telebot, command: CatchallCommand) {.async.} =
         await sendRconCmd(fmt"{command.command} {command.params}", 1002)
       else:
         await sendRconCmd(command.command, 1002)
+
 proc initTelegram*(cfg: Telegram, sendCmd: SendCommand) {.async.} =
   config = cfg
   sendRconCmd = sendCmd
